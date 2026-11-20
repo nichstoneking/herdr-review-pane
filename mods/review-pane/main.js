@@ -22,6 +22,7 @@ import { h_flex, v_flex, Popup, Textarea, TextareaState } from "gpui-base";
 import { knownAgents, nextCommand, notify, panes, props, run, settings, spaces, theme, watchFolder } from "herdr";
 import { act, commit, diff, editor, git, message, send, status } from "./engine.js";
 import { Scroller } from "./scroller.js";
+import { unzoom } from "./zoom.js";
 import { color, isDark, readable } from "./paint.js";
 import { addThread, agentMessage, agentName, agentsFor, anchorOf, notesKey, notesOf, rangeOf, removeThreads } from "./review.js";
 import { checkoutPR, listPRs, prThreads, readPR, replyToThread, setResolved, submitReview, viewPR, viewerLogin } from "./github.js";
@@ -797,6 +798,10 @@ export default class ChangesTab extends View {
     else body = v_flex().flex_1().min_h(0).font_family(font).text_size(12).child(this.scroll.view(t, (i) => this.item(b.items[i], t, cx)));
     return v_flex()
       .id("review-pane")
+      .on_size_change((size, cx) => {
+        const width = unzoom(size.width);
+        if (width !== this.width) { this.width = width; cx.notify(); }
+      })
       .relative()
       .size_full()
       .min_h(0)
@@ -846,34 +851,34 @@ export default class ChangesTab extends View {
     const repo = (st?.root ?? this.cwd ?? "").split("/").pop();
     const about = pr ? `${pr.title}${pr.author ? ` · @${pr.author}` : ""} · ${pr.base} ← ${pr.headRef}` : `${repo}${st?.branch ? ` · ${st.branch}` : ""}${this.on ? ` · ${this.on}` : ""}`;
     const anyOpen = this.anyOpen();
-    return h_flex()
-      .h(44)
-      .flex_none()
-      .px(12)
-      .gap(10)
-      .items_center()
-      .border_b(1)
-      .border_color(t.border)
-      .child(icon("branch", 14, t.muted))
-      .child(div().flex_none().font_semibold().child(title))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(about))
-      .when(Boolean(pr && this.ghError), (e) => e.child(div().id("gh-error").flex_none().text_size(11).text_color(t.blocked).tooltip(this.ghError ?? "").child("GitHub comments didn't load")))
-      .when(add > 0, (e) => e.child(div().flex_none().text_size(12).text_color(t.ansi2).child(`+${add.toLocaleString()}`)))
-      .when(del > 0, (e) => e.child(div().flex_none().text_size(12).text_color(t.ansi1).child(`−${del.toLocaleString()}`)))
-      .when(Boolean(pr), (e) => e.child(this.reviewPopup(t)))
-      .when(!pr, (e) => e.child(
-        h_flex().flex_none().gap(2).p(2).rounded(8).bg(t.chrome)
-          .child(this.button(t, "scope-worktree", "Uncommitted", (cx) => this.setScope("worktree", cx), { on: this.scope === "worktree" }))
-          .child(this.basePicker(t, base)),
-      ))
-      .child(this.prsPopup(t))
-      .child(
-        h_flex().flex_none().gap(2)
-          .child(this.button(t, "view-unified", null, (cx) => { this.split = false; cx.notify(); }, { on: !this.split, iconName: "unified", tip: "Unified" }))
-          .child(this.button(t, "view-split", null, (cx) => { this.split = true; cx.notify(); }, { on: this.split, iconName: "split", tip: "Split" }))
-          .child(this.button(t, "toggle-all", null, (cx) => this.setAll(anyOpen, cx), anyOpen ? { iconName: "collapse", tip: "Collapse all" } : { iconName: "expand", tip: "Expand all" }))
-          .child(this.button(t, "refresh", null, (cx) => { this.ghAt = 0; this.refresh(cx); }, { iconName: "refresh", tip: this.loading ? "Refreshing…" : "Refresh" })),
-      );
+    // Narrower than the bar needs: the title on one row, the controls on a second,
+    // the base branch's name cut to what's left.
+    const width = this.width ?? 0, narrow = width > 0 && width < 760;
+    const head = [
+      icon("branch", 14, t.muted),
+      div().min_w(0).truncate().font_semibold().child(title),
+      div().flex_1().min_w(0).truncate().text_size(12).text_color(t.dim).child(about),
+    ];
+    if (pr && this.ghError) head.push(div().id("gh-error").flex_none().text_size(11).text_color(t.blocked).tooltip(this.ghError).child("GitHub comments didn't load"));
+    if (add > 0) head.push(div().flex_none().text_size(12).text_color(t.ansi2).child(`+${add.toLocaleString()}`));
+    if (del > 0) head.push(div().flex_none().text_size(12).text_color(t.ansi1).child(`−${del.toLocaleString()}`));
+    const controls = [
+      pr ? this.reviewPopup(t) : h_flex().flex_none().gap(2).p(2).rounded(8).bg(t.chrome)
+        .child(this.button(t, "scope-worktree", "Uncommitted", (cx) => this.setScope("worktree", cx), { on: this.scope === "worktree" }))
+        .child(this.basePicker(t, base, narrow ? Math.max(48, Math.min(180, width - 380)) : 180)),
+      this.prsPopup(t),
+      h_flex().flex_none().gap(2)
+        .child(this.button(t, "view-unified", null, (cx) => { this.split = false; cx.notify(); }, { on: !this.split, iconName: "unified", tip: "Unified" }))
+        .child(this.button(t, "view-split", null, (cx) => { this.split = true; cx.notify(); }, { on: this.split, iconName: "split", tip: "Split" }))
+        .child(this.button(t, "toggle-all", null, (cx) => this.setAll(anyOpen, cx), anyOpen ? { iconName: "collapse", tip: "Collapse all" } : { iconName: "expand", tip: "Expand all" }))
+        .child(this.button(t, "refresh", null, (cx) => { this.ghAt = 0; this.refresh(cx); }, { iconName: "refresh", tip: this.loading ? "Refreshing…" : "Refresh" })),
+    ];
+    if (!narrow) {
+      return h_flex().h(44).flex_none().px(12).gap(10).items_center().border_b(1).border_color(t.border).children(head).children(controls);
+    }
+    return v_flex().flex_none().px(12).py(6).gap(4).border_b(1).border_color(t.border)
+      .child(h_flex().h(28).gap(10).items_center().children(head))
+      .child(h_flex().h(30).gap(10).items_center().min_w(0).overflow_hidden().children(controls));
   }
 
   // A button with a surface hung under it (right edges lined up) while
@@ -955,8 +960,10 @@ export default class ChangesTab extends View {
   }
 
   // The Base button, with the branch list hung under it (right edges lined up) while picking.
-  basePicker(t, base) {
-    const trigger = this.button(t, "scope-branch", `Base: ${base} ▾`, (cx) => (this.scope === "branch" ? this.openPicker(cx) : this.setScope("branch", cx)), { on: this.scope === "branch", tip: "Compare with a branch (click again to pick it)" });
+  basePicker(t, base, maxW) {
+    // The branch name is cut at `maxW` px so the bar's buttons keep their place; the tooltip has it whole.
+    const label = h_flex().gap(4).child(div().max_w(maxW).truncate().child(`Base: ${base}`)).child("▾");
+    const trigger = this.button(t, "scope-branch", label, (cx) => (this.scope === "branch" ? this.openPicker(cx) : this.setScope("branch", cx)), { on: this.scope === "branch", tip: `Base: ${base}. Click again to pick another branch` });
     const p = this.picker;
     if (!p) return this.popup("base", trigger);
     const row = (id, label, onPress, on = false) =>
